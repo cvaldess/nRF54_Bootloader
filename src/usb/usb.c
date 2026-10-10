@@ -25,7 +25,9 @@
 #include "nrfx.h"
 #include "boards.h"
 #include "tusb.h"
+#include "uf2/uf2.h"
 #include "usb.h"
+#include "usb_desc.h"
 
 // Serial DFU only runs with the SoftDevice off, so nothing else uses the interrupt levels
 #define USBHS_IRQ_PRIORITY  7
@@ -77,7 +79,9 @@ static void usb_start(void)
 //--------------------------------------------------------------------+
 void usb_init(bool cdc_only)
 {
-  (void) cdc_only;
+  // CDC only when the application asked for serial DFU, else CDC + the UF2 drive
+  usb_desc_init(cdc_only);
+  uf2_init();
 
   NRF_VREGUSB->EVENTS_VBUSDETECTED = 0;
   NRF_VREGUSB->TASKS_START = 1;

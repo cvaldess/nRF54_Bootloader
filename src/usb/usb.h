@@ -27,7 +27,7 @@
 
 #include <stdbool.h>
 
-// Serial DFU over USB CDC on the nRF54LM20 USBHS block.
+// DFU over the nRF54LM20 USBHS block: serial DFU over CDC and, unless cdc_only, a UF2 drive (MSC).
 // usb_init() arms it, usb_task() (called from the DFU event loop) brings the stack up once VBUS
 // is present and then runs it, usb_teardown() leaves the port and the clocks as the application
 // expects to find them.

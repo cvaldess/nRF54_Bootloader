@@ -28,14 +28,17 @@
 #include "boards.h"
 #include "tusb.h"
 
-#ifndef USB_DESC_VID
-#error "USB DFU needs USB_DESC_VID and USB_DESC_CDC_ONLY_PID in board.h"
+#include "usb_desc.h"
+
+#if !defined(USB_DESC_VID) || !defined(USB_DESC_UF2_PID) || !defined(USB_DESC_CDC_ONLY_PID)
+#error "USB DFU needs USB_DESC_VID, USB_DESC_UF2_PID and USB_DESC_CDC_ONLY_PID in board.h"
 #endif
 
 enum
 {
   ITF_NUM_CDC = 0,
   ITF_NUM_CDC_DATA,
+  ITF_NUM_MSC,
   ITF_NUM_TOTAL
 };
 
@@ -45,19 +48,26 @@ enum
   STRID_MANUFACTURER,
   STRID_PRODUCT,
   STRID_SERIAL,
-  STRID_CDC
+  STRID_CDC,
+  STRID_MSC
 };
 
 #define EPNUM_CDC_NOTIF   0x81
 #define EPNUM_CDC_OUT     0x02
 #define EPNUM_CDC_IN      0x82
+#define EPNUM_MSC_OUT     0x03
+#define EPNUM_MSC_IN      0x83
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_CDC_LEN      (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN)
+#define CONFIG_CDC_MSC_LEN  (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+
+// CDC + MSC (UF2 drive) unless the application asked for serial DFU only
+static bool _cdc_only = false;
 
 //--------------------------------------------------------------------+
 // Device Descriptor
 //--------------------------------------------------------------------+
-static tusb_desc_device_t const desc_device =
+static tusb_desc_device_t desc_device =
 {
   .bLength            = sizeof(tusb_desc_device_t),
   .bDescriptorType    = TUSB_DESC_DEVICE,
@@ -70,7 +80,7 @@ static tusb_desc_device_t const desc_device =
   .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
   .idVendor           = USB_DESC_VID,
-  .idProduct          = USB_DESC_CDC_ONLY_PID,
+  .idProduct          = USB_DESC_UF2_PID,
   .bcdDevice          = 0x0100,
 
   .iManufacturer      = STRID_MANUFACTURER,
@@ -89,25 +99,47 @@ uint8_t const * tud_descriptor_device_cb(void)
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 // Bulk endpoints are 512 bytes at high speed and 64 at full speed
-static uint8_t const desc_hs_configuration[] =
+static uint8_t const desc_hs_cdc_msc[] =
 {
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_CDC_MSC_LEN, 0x00, 100),
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 512),
+  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, STRID_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512),
+};
+
+static uint8_t const desc_fs_cdc_msc[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_CDC_MSC_LEN, 0x00, 100),
+  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+  TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, STRID_MSC, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+};
+
+static uint8_t const desc_hs_cdc[] =
+{
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL - 1, 0, CONFIG_CDC_LEN, 0x00, 100),
   TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 512),
 };
 
-static uint8_t const desc_fs_configuration[] =
+static uint8_t const desc_fs_cdc[] =
 {
-  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
+  TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL - 1, 0, CONFIG_CDC_LEN, 0x00, 100),
   TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_CDC, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
-TU_VERIFY_STATIC(sizeof(desc_hs_configuration) == CONFIG_TOTAL_LEN, "size is not correct");
-TU_VERIFY_STATIC(sizeof(desc_fs_configuration) == CONFIG_TOTAL_LEN, "size is not correct");
+TU_VERIFY_STATIC(sizeof(desc_hs_cdc_msc) == CONFIG_CDC_MSC_LEN, "size is not correct");
+TU_VERIFY_STATIC(sizeof(desc_fs_cdc_msc) == CONFIG_CDC_MSC_LEN, "size is not correct");
+TU_VERIFY_STATIC(sizeof(desc_hs_cdc) == CONFIG_CDC_LEN, "size is not correct");
+TU_VERIFY_STATIC(sizeof(desc_fs_cdc) == CONFIG_CDC_LEN, "size is not correct");
+
+static uint8_t const * configuration_for(bool high_speed)
+{
+  if (_cdc_only) return high_speed ? desc_hs_cdc : desc_fs_cdc;
+  return high_speed ? desc_hs_cdc_msc : desc_fs_cdc_msc;
+}
 
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 {
   (void) index;
-  return (tud_speed_get() == TUSB_SPEED_HIGH) ? desc_hs_configuration : desc_fs_configuration;
+  return configuration_for(tud_speed_get() == TUSB_SPEED_HIGH);
 }
 
 // A high-speed capable device describes how it would look at the other speed
@@ -131,16 +163,15 @@ uint8_t const * tud_descriptor_device_qualifier_cb(void)
   return (uint8_t const *) &desc_device_qualifier;
 }
 
-static uint8_t desc_other_speed_config[CONFIG_TOTAL_LEN];
+static uint8_t desc_other_speed_config[CONFIG_CDC_MSC_LEN];
 
 uint8_t const * tud_descriptor_other_speed_configuration_cb(uint8_t index)
 {
   (void) index;
 
   // the other speed's configuration, typed as such
-  memcpy(desc_other_speed_config,
-         (tud_speed_get() == TUSB_SPEED_HIGH) ? desc_fs_configuration : desc_hs_configuration,
-         CONFIG_TOTAL_LEN);
+  uint8_t const * other = configuration_for(tud_speed_get() != TUSB_SPEED_HIGH);
+  memcpy(desc_other_speed_config, other, _cdc_only ? CONFIG_CDC_LEN : CONFIG_CDC_MSC_LEN);
   desc_other_speed_config[1] = TUSB_DESC_OTHER_SPEED_CONFIG;
 
   return desc_other_speed_config;
@@ -154,6 +185,7 @@ static char const * const string_desc_arr[] =
   [STRID_MANUFACTURER] = BLEDIS_MANUFACTURER,
   [STRID_PRODUCT]      = UF2_PRODUCT_NAME " DFU",
   [STRID_CDC]          = UF2_PRODUCT_NAME " CDC",
+  [STRID_MSC]          = UF2_PRODUCT_NAME " UF2",
 };
 
 static uint16_t _desc_str[32 + 1];
@@ -174,6 +206,13 @@ static uint8_t serial_to_utf16(uint16_t * dst)
   }
 
   return count;
+}
+
+// Enumerate as CDC + MSC or CDC only; the two get different PIDs so the host keeps them apart
+void usb_desc_init(bool cdc_only)
+{
+  _cdc_only = cdc_only;
+  desc_device.idProduct = cdc_only ? USB_DESC_CDC_ONLY_PID : USB_DESC_UF2_PID;
 }
 
 uint16_t const * tud_descriptor_string_cb(uint8_t index, uint16_t langid)
