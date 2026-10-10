@@ -28,6 +28,16 @@
 #define RTS_PIN_NUMBER        0xFFFFFFFF
 
 //--------------------------------------------------------------------+
+// USB (J3, serial DFU over CDC)
+//--------------------------------------------------------------------+
+// Nothing is registered for this board. The application keeps TinyUSB's default 0x239A:0xCAFE;
+// the bootloader takes the same PID with bit 15 clear, as Adafruit's bootloaders do, so the
+// host gives it a port of its own.
+#define USB_DESC_VID           0x239A
+#define USB_DESC_CDC_ONLY_PID  0x4AFE
+#define UF2_PRODUCT_NAME       "Nordic nRF54LM20-DK"
+
+//--------------------------------------------------------------------+
 // BLE OTA
 //--------------------------------------------------------------------+
 #define BLEDIS_MANUFACTURER   "Nordic"
