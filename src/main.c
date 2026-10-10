@@ -67,9 +67,13 @@
 #include "nrf_cracen.h"
 #include "nrf_cracen_rng.h"
 
-/* nRF54L has no USB peripheral — serial DFU uses UART only */
+#ifdef USB_DFU
+#include "usb.h"
+#else
+/* Serial DFU over UART: no USB peripheral, or the board does not use it */
 #define usb_init(x)       led_state(STATE_USB_MOUNTED)
 #define usb_teardown()
+#endif
 
 /*
  * Blinking patterns:
