@@ -49,12 +49,15 @@ extern "C" {
 #define CFG_TUD_ENDPOINT0_SIZE    64
 
 #define CFG_TUD_CDC               1
-#define CFG_TUD_MSC               0
+#define CFG_TUD_MSC               1
 
 // Bulk endpoints are 512 bytes at high speed. hci_slip drains the RX FIFO from tud_cdc_rx_cb().
 #define CFG_TUD_CDC_EP_BUFSIZE    512
 #define CFG_TUD_CDC_RX_BUFSIZE    1024
 #define CFG_TUD_CDC_TX_BUFSIZE    512
+
+// A larger buffer lets write10 take several 512-byte UF2 blocks per call
+#define CFG_TUD_MSC_EP_BUFSIZE    4096
 
 #ifdef __cplusplus
 }
